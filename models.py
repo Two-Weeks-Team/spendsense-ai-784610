@@ -1,7 +1,9 @@
+import os
 import uuid
 from datetime import datetime, date
 from typing import Optional, List, Any
 
+from dotenv import load_dotenv
 from sqlalchemy import (
     Column,
     String,
@@ -13,33 +15,67 @@ from sqlalchemy import (
     JSON,
     ForeignKey,
     Index,
+    create_engine,
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy.orm import relationship, declarative_base, sessionmaker, Session
+from pydantic import BaseModel, Field
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL", os.getenv("POSTGRES_URL", ""))
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL or POSTGRES_URL environment variable not set")
+
+if DATABASE_URL.startswith("postgresql+asyncpg://"):
+    DATABASE_URL = DATABASE_URL.replace(
+        "postgresql+asyncpg://", "postgresql+psycopg://", 1
+    )
+elif DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+
+connect_args: dict = {}
+if "localhost" not in DATABASE_URL and "sslmode" not in DATABASE_URL:
+    connect_args["sslmode"] = "require"
+
+engine = create_engine(DATABASE_URL, echo=False, connect_args=connect_args)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 Base = declarative_base()
 
-# ---------------------------------------------------------------------
-# User model (simplified – authentication omitted for brevity)
-# ---------------------------------------------------------------------
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 class User(Base):
     __tablename__ = "users"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     last_login = Column(DateTime(timezone=True), nullable=True)
     subscription_status = Column(String(50), nullable=False, server_default="free")
     auth_token = Column(String, nullable=True, index=True)
     reset_token = Column(String, nullable=True, index=True)
 
-    transactions: List["Transaction"] = relationship("Transaction", back_populates="user", cascade="all, delete-orphan")
-    reports: List["WeeklyReport"] = relationship("WeeklyReport", back_populates="user", cascade="all, delete-orphan")
+    transactions: List["Transaction"] = relationship(
+        "Transaction", back_populates="user", cascade="all, delete-orphan"
+    )
+    reports: List["WeeklyReport"] = relationship(
+        "WeeklyReport", back_populates="user", cascade="all, delete-orphan"
+    )
 
-# ---------------------------------------------------------------------
-# Transaction model – raw CSV rows and AI predictions
-# ---------------------------------------------------------------------
+
 class Transaction(Base):
     __tablename__ = "transactions"
     __table_args__ = (
@@ -49,7 +85,9 @@ class Transaction(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     date = Column(Date, nullable=False)
     amount = Column(Numeric(15, 2), nullable=False)
     description = Column(String, nullable=False)
@@ -57,28 +95,31 @@ class Transaction(Base):
     user_overridden_category = Column(String(100), nullable=True)
     model_version = Column(String(50), nullable=False)
     confidence_score = Column(Float, nullable=False)
-    raw_csv_data = Column(String, nullable=False)  # encrypted before storage (handled in service layer)
+    raw_csv_data = Column(String, nullable=False)
     processed = Column(Boolean, nullable=False, default=False)
     processed_at = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="transactions")
-    prediction = relationship("Prediction", uselist=False, back_populates="transaction", cascade="all, delete-orphan")
+    prediction = relationship(
+        "Prediction",
+        uselist=False,
+        back_populates="transaction",
+        cascade="all, delete-orphan",
+    )
 
-# ---------------------------------------------------------------------
-# ModelVersions – tracks which model was used for a given inference batch
-# ---------------------------------------------------------------------
+
 class ModelVersion(Base):
     __tablename__ = "model_versions"
     __table_args__ = (Index("ix_model_versions_active", "is_active"),)
 
     version = Column(String(50), primary_key=True)
     description = Column(String, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     is_active = Column(Boolean, nullable=False, default=False)
 
-# ---------------------------------------------------------------------
-# Prediction – separates raw AI output from the transaction table
-# ---------------------------------------------------------------------
+
 class Prediction(Base):
     __tablename__ = "predictions"
     __table_args__ = (
@@ -87,16 +128,18 @@ class Prediction(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    transaction_id = Column(UUID(as_uuid=True), ForeignKey("transactions.id", ondelete="CASCADE"), nullable=False)
+    transaction_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("transactions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     category = Column(String(100), nullable=False)
     confidence = Column(Float, nullable=False)
-    reason = Column(JSON, nullable=False)  # JSON‑blob with model rationale
+    reason = Column(JSON, nullable=False)
 
     transaction = relationship("Transaction", back_populates="prediction")
 
-# ---------------------------------------------------------------------
-# WeeklyReport – aggregated view of a user’s spending period
-# ---------------------------------------------------------------------
+
 class WeeklyReport(Base):
     __tablename__ = "weekly_reports"
     __table_args__ = (
@@ -105,20 +148,24 @@ class WeeklyReport(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=False)
     total_spending = Column(Numeric(15, 2), nullable=False)
-    category_breakdown = Column(JSONB, nullable=False)  # {"Groceries": 123.45, ...}
-    savings_recommendations = Column(JSONB, nullable=False)  # list of recommendation objects
-    generated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    category_breakdown = Column(JSONB, nullable=False)
+    savings_recommendations = Column(JSONB, nullable=False)
+    generated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
     user = relationship("User", back_populates="reports")
-    recommendations = relationship("Recommendation", back_populates="report", cascade="all, delete-orphan")
+    recommendations = relationship(
+        "Recommendation", back_populates="report", cascade="all, delete-orphan"
+    )
 
-# ---------------------------------------------------------------------
-# Recommendation – individual AI‑generated tips attached to a report
-# ---------------------------------------------------------------------
+
 class Recommendation(Base):
     __tablename__ = "recommendations"
     __table_args__ = (
@@ -127,8 +174,12 @@ class Recommendation(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    report_id = Column(UUID(as_uuid=True), ForeignKey("weekly_reports.id", ondelete="CASCADE"), nullable=False)
-    recommendation_type = Column(String(50), nullable=False)  # e.g., "budget_tweak" or "savings_idea"
+    report_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("weekly_reports.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    recommendation_type = Column(String(50), nullable=False)
     description = Column(String, nullable=False)
     confidence = Column(Float, nullable=False)
     reason = Column(JSON, nullable=False)
@@ -136,59 +187,59 @@ class Recommendation(Base):
 
     report = relationship("WeeklyReport", back_populates="recommendations")
 
-# ---------------------------------------------------------------------
-# Pydantic schemas (request/response models)
-# ---------------------------------------------------------------------
-from pydantic import BaseModel, Field
-from datetime import date as pydate
 
 class TransactionCreate(BaseModel):
-    date: pydate
+    date: date
     description: str
     amount: float
     raw_csv_data: str
 
+
 class TransactionOut(BaseModel):
     id: uuid.UUID
-    date: pydate
+    date: date
     description: str
     amount: float
     predicted_category: str = Field(..., description="Category from AI model")
     confidence_score: float
     user_overridden_category: Optional[str] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
+
 
 class CategorizeRequest(BaseModel):
-    upload_id: str  # reference to a CSV processing batch – simplified for demo
+    upload_id: str
     model_version: Optional[str] = None
+
 
 class CategorizeResponse(BaseModel):
     transactions: List[TransactionOut]
     model_used: str
 
+
 class SavingsPlanRequest(BaseModel):
     user_id: uuid.UUID
-    timeframe_start: pydate
-    timeframe_end: pydate
+    timeframe_start: date
+    timeframe_end: date
+
 
 class SavingsPlanItem(BaseModel):
     description: str
     confidence: float
     estimated_monthly_savings: float
 
+
 class SavingsPlanResponse(BaseModel):
     recommendations: List[SavingsPlanItem]
     model_used: str
 
+
 class WeeklyReportResponse(BaseModel):
-    start_date: pydate
-    end_date: pydate
+    start_date: date
+    end_date: date
     total_spending: float
     category_breakdown: dict[str, float]
     savings_recommendations: List[dict]
     generated_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
