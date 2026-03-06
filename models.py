@@ -37,8 +37,17 @@ elif DATABASE_URL.startswith("postgres://"):
 elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
+if "?ssl=" in DATABASE_URL and "sslmode" not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("?ssl=", "?sslmode=")
+if "&ssl=" in DATABASE_URL and "sslmode" not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("&ssl=", "&sslmode=")
+
 connect_args: dict = {}
-if "localhost" not in DATABASE_URL and "sslmode" not in DATABASE_URL:
+if (
+    "localhost" not in DATABASE_URL
+    and "sslmode" not in DATABASE_URL
+    and "ssl" not in DATABASE_URL
+):
     connect_args["sslmode"] = "require"
 
 engine = create_engine(DATABASE_URL, echo=False, connect_args=connect_args)
