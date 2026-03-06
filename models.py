@@ -66,7 +66,7 @@ def get_db():
 
 
 class User(Base):
-    __tablename__ = "users"
+    __tablename__ = "ss_users"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
@@ -78,25 +78,27 @@ class User(Base):
     auth_token = Column(String, nullable=True, index=True)
     reset_token = Column(String, nullable=True, index=True)
 
-    transactions: List["Transaction"] = relationship(
+    transactions = relationship(
         "Transaction", back_populates="user", cascade="all, delete-orphan"
     )
-    reports: List["WeeklyReport"] = relationship(
+    reports = relationship(
         "WeeklyReport", back_populates="user", cascade="all, delete-orphan"
     )
 
 
 class Transaction(Base):
-    __tablename__ = "transactions"
+    __tablename__ = "ss_transactions"
     __table_args__ = (
-        Index("ix_transactions_user_id", "user_id"),
-        Index("ix_transactions_date", "date"),
-        Index("ix_transactions_predicted_category", "predicted_category"),
+        Index("ix_ss_transactions_user_id", "user_id"),
+        Index("ix_ss_transactions_date", "date"),
+        Index("ix_ss_transactions_predicted_category", "predicted_category"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("ss_users.id", ondelete="CASCADE"),
+        nullable=False,
     )
     date = Column(Date, nullable=False)
     amount = Column(Numeric(15, 2), nullable=False)
@@ -119,8 +121,8 @@ class Transaction(Base):
 
 
 class ModelVersion(Base):
-    __tablename__ = "model_versions"
-    __table_args__ = (Index("ix_model_versions_active", "is_active"),)
+    __tablename__ = "ss_model_versions"
+    __table_args__ = (Index("ix_ss_model_versions_active", "is_active"),)
 
     version = Column(String(50), primary_key=True)
     description = Column(String, nullable=False)
@@ -131,16 +133,16 @@ class ModelVersion(Base):
 
 
 class Prediction(Base):
-    __tablename__ = "predictions"
+    __tablename__ = "ss_predictions"
     __table_args__ = (
-        Index("ix_predictions_transaction_id", "transaction_id"),
-        Index("ix_predictions_category", "category"),
+        Index("ix_ss_predictions_transaction_id", "transaction_id"),
+        Index("ix_ss_predictions_category", "category"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     transaction_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("transactions.id", ondelete="CASCADE"),
+        ForeignKey("ss_transactions.id", ondelete="CASCADE"),
         nullable=False,
     )
     category = Column(String(100), nullable=False)
@@ -151,15 +153,17 @@ class Prediction(Base):
 
 
 class WeeklyReport(Base):
-    __tablename__ = "weekly_reports"
+    __tablename__ = "ss_weekly_reports"
     __table_args__ = (
-        Index("ix_reports_user_id", "user_id"),
-        Index("ix_reports_start_end", "start_date", "end_date"),
+        Index("ix_ss_reports_user_id", "user_id"),
+        Index("ix_ss_reports_start_end", "start_date", "end_date"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("ss_users.id", ondelete="CASCADE"),
+        nullable=False,
     )
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=False)
@@ -177,16 +181,16 @@ class WeeklyReport(Base):
 
 
 class Recommendation(Base):
-    __tablename__ = "recommendations"
+    __tablename__ = "ss_recommendations"
     __table_args__ = (
-        Index("ix_recommendations_report_id", "report_id"),
-        Index("ix_recommendations_type", "recommendation_type"),
+        Index("ix_ss_recommendations_report_id", "report_id"),
+        Index("ix_ss_recommendations_type", "recommendation_type"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     report_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("weekly_reports.id", ondelete="CASCADE"),
+        ForeignKey("ss_weekly_reports.id", ondelete="CASCADE"),
         nullable=False,
     )
     recommendation_type = Column(String(50), nullable=False)
