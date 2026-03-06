@@ -12,7 +12,7 @@ MODEL_NAME = os.getenv("DO_INFERENCE_MODEL", "openai-gpt-oss-120b")
 BASE_ENDPOINT = os.getenv("DO_INFERENCE_ENDPOINT", "https://inference.do-ai.run/v1")
 
 if not INFERENCE_KEY:
-    raise RuntimeError("DIGITALOCEAN_INFERENCE_KEY environment variable is required")
+    INFERENCE_KEY = "missing"
 
 
 class AIService:
