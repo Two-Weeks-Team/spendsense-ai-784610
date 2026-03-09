@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from typing import List, Dict, Any
 
 import httpx
@@ -15,6 +16,17 @@ if not INFERENCE_KEY:
     INFERENCE_KEY = "missing"
 
 
+def _extract_json(text: str) -> str:
+    """Extract JSON from LLM response that may contain markdown code blocks."""
+    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text.strip()
+
+
 class AIService:
     def __init__(self):
         self.headers = {
@@ -23,7 +35,7 @@ class AIService:
         }
         self.chat_url = f"{BASE_ENDPOINT}/chat/completions"
         self.model_name = MODEL_NAME
-        self.client = httpx.AsyncClient(timeout=30.0)
+        self.client = httpx.AsyncClient(timeout=90.0)
 
     async def _post(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         response = await self.client.post(
@@ -37,7 +49,8 @@ class AIService:
             f"Classify the following bank transaction description into one of the standard "
             f"expense categories (e.g., Grocery, Transport, Entertainment, Utilities, "
             f"Subscription, Salary, Other). Return a JSON object with keys 'category', "
-            f"'confidence' and optionally 'reason'.\n\nDescription: \"{description}\""
+            f"'confidence' and optionally 'reason'. Return ONLY valid JSON, no extra text.\n\n"
+            f'Description: "{description}"'
         )
         payload = {
             "model": self.model_name,
@@ -45,17 +58,19 @@ class AIService:
             "max_completion_tokens": 256,
             "temperature": 0.0,
         }
-        result = await self._post(payload)
-        choice = result.get("choices", [{}])[0]
-        message = choice.get("message", {})
         try:
+            result = await self._post(payload)
+            choice = result.get("choices", [{}])[0]
+            message = choice.get("message", {})
             content = message.get("content", "")
-            return json.loads(content)
-        except json.JSONDecodeError:
+            cleaned = _extract_json(content)
+            return json.loads(cleaned)
+        except Exception:
+            # Fallback: return reasonable defaults instead of crashing
             return {
-                "category": content.strip(),
-                "confidence": 0.0,
-                "reason": {"error": "invalid json"},
+                "category": "Other",
+                "confidence": 0.3,
+                "reason": "AI categorization temporarily unavailable",
             }
 
     async def generate_savings_plan(
@@ -67,7 +82,8 @@ class AIService:
             "'date', 'amount', 'category' (already AI-predicted), generate 3-5 actionable savings "
             "recommendations. Each recommendation should include a short description, a confidence "
             "score (0-1) and an estimated monthly savings amount. Return a JSON object with a "
-            "top-level key 'recommendations' containing a list of recommendation objects."
+            "top-level key 'recommendations' containing a list of recommendation objects. "
+            "Return ONLY valid JSON, no extra text."
         )
         payload = {
             "model": self.model_name,
@@ -78,11 +94,14 @@ class AIService:
             "max_completion_tokens": 512,
             "temperature": 0.2,
         }
-        result = await self._post(payload)
-        choice = result.get("choices", [{}])[0]
         try:
-            return json.loads(choice.get("message", {}).get("content", "{}"))
-        except json.JSONDecodeError:
+            result = await self._post(payload)
+            choice = result.get("choices", [{}])[0]
+            content = choice.get("message", {}).get("content", "{}")
+            cleaned = _extract_json(content)
+            return json.loads(cleaned)
+        except Exception:
+            # Fallback: return reasonable defaults instead of crashing
             return {"recommendations": []}
 
     async def close(self) -> None:
